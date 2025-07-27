@@ -1,0 +1,30 @@
+# 🔐 보안 파일들
+.env
+*.key
+config.local.py
+secrets/
+
+# 📊 생성된 분석 결과물들
+analysis_results/
+*.docx
+*.xlsx
+*.pdf
+*.png
+*.html
+
+# 🐍 Python 관련
+__pycache__/
+*.pyc
+*.pyo
+venv/
+env/
+
+# 💻 운영체제 파일들
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# 📝 임시 파일들
+*.tmp
+*.log
+temp/
