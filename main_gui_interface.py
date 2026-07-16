@@ -76,6 +76,20 @@ class ModernAccountingGUI:
         self.add_chat_message("system", "🤖 AI 회계 분석 시스템이 준비되었습니다.")
         self.add_chat_message("system", "💡 사용법:\n1. DART API 키 입력 후 연결\n2. 회사명 검색\n3. AI 분석 시작\n4. 보고서 생성 및 질문하기")
 
+    @staticmethod
+    def _load_key_from_env_file() -> str:
+        """프로젝트 폴더의 .env 파일에서 DART_API_KEY를 읽어온다 (없으면 빈 문자열)"""
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+        try:
+            with open(env_path, encoding="utf-8-sig") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("DART_API_KEY="):
+                        return line.split("=", 1)[1].strip()
+        except OSError:
+            pass
+        return ""
+
     def setup_window(self):
         """메인 윈도우 설정"""
         self.root.title("🏛️ AI 기반 회계 분석 시스템 - 보고서 생성 통합")
@@ -134,6 +148,11 @@ class ModernAccountingGUI:
             width=350,
             show="*"
         )
+
+        # .env 파일에 DART_API_KEY가 있으면 자동으로 채워넣기
+        saved_key = self._load_key_from_env_file()
+        if saved_key:
+            self.api_entry.insert(0, saved_key)
         
         self.connect_button = ctk.CTkButton(
             self.api_frame,

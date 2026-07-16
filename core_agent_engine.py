@@ -31,22 +31,19 @@ class AdvancedAuditAgent:
                 "model": "llama3.1:8b",
                 "name": "김성실 (총괄조정관)",
                 "role": "전체 조율 및 합의 도출",
-                "personality": "신중하고 균형잡힌 시각, 갈등 조정 전문가",
-                "decision_weight": 0.4
+                "personality": "신중하고 균형잡힌 시각, 갈등 조정 전문가"
             },
             "financial_analyst": {
-                "model": "qwen2.5:7b", 
+                "model": "qwen2.5:7b",
                 "name": "이정확 (재무분석가)",
                 "role": "재무분석 및 비율 해석 전문가",
-                "personality": "정확하고 분석적, 데이터 기반 판단",
-                "decision_weight": 0.35
+                "personality": "정확하고 분석적, 데이터 기반 판단"
             },
             "fraud_detective": {
                 "model": "mistral:7b",
-                "name": "박의심 (부정탐지전문가)", 
+                "name": "박의심 (부정탐지전문가)",
                 "role": "부정탐지 및 위험평가 전문가",
-                "personality": "의심 많고 철저함, 보수적 접근",
-                "decision_weight": 0.25
+                "personality": "의심 많고 철저함, 보수적 접근"
             }
         }
         
@@ -73,13 +70,12 @@ class AdvancedAuditAgent:
             os.makedirs(directory, exist_ok=True)
 
     def load_model(self, model_name: str):
-        """모델 로딩"""
+        """모델 전환 기록 (실제 로딩/언로딩은 Ollama 서버가 요청 시점에 수행)"""
         if self.current_loaded_model == model_name:
             return
-        
-        print(f"🔄 {model_name} 모델 로딩 중...")
+
+        print(f"🔄 모델 전환: {model_name}")
         self.current_loaded_model = model_name
-        time.sleep(1)
 
     def call_ollama(self, model_key: str, prompt: str) -> str:
         """Ollama API 호출"""
@@ -592,7 +588,7 @@ class AdvancedAuditAgent:
         return {
             "final_consensus": final_consensus,
             "investment_grade": self._extract_grade_from_consensus(final_consensus),
-            "confidence_level": 85
+            "confidence_level": self._calculate_agreement_confidence(opinions)
         }
 
     def _conduct_fraud_discussion(self, indicators: Dict, financial_data: Dict) -> Dict:
@@ -622,7 +618,7 @@ class AdvancedAuditAgent:
         return {
             "final_consensus": final_risk_consensus,
             "risk_grade": self._extract_grade_from_consensus(final_risk_consensus),
-            "confidence_level": 80
+            "confidence_level": self._calculate_agreement_confidence(risk_opinions)
         }
 
     def _conduct_final_investment_discussion(self, ratios: Dict, fraud_ratios: Dict, company_name: str) -> Dict:
@@ -646,11 +642,11 @@ class AdvancedAuditAgent:
             final_opinions[agent_key] = opinion
         
         final_consensus = self._reach_consensus(final_opinions, "최종투자의견")
-        
+
         return {
             "final_consensus": final_consensus,
             "investment_grade": investment_grade,
-            "confidence_level": 90
+            "confidence_level": self._calculate_agreement_confidence(final_opinions)
         }
 
     # === 헬퍼 메서드들 ===
@@ -664,7 +660,8 @@ class AdvancedAuditAgent:
 역할: {agent['role']}
 성격: {agent['personality']}
 
-다음 요청에 대해 당신의 전문성과 성격에 맞게 간결하게 응답해주세요:
+다음 요청에 대해 당신의 전문성과 성격에 맞게 간결하게 응답해주세요.
+반드시 한국어로만 답변하세요:
 
 {prompt}
 """
@@ -703,15 +700,41 @@ class AdvancedAuditAgent:
         
         return self.call_ollama("coordinator", consensus_prompt)
 
+    def _try_extract_grade(self, text: str) -> Optional[str]:
+        """텍스트에서 등급(S/A/B/C/D) 추출 시도. 실패 시 None"""
+        # "A등급", "등급 A", "등급: A", "투자등급은 B", "Grade A", "**B**" 등 다양한 표기 대응
+        patterns = [
+            r"([SABCD])\s*등급",
+            r"등급\s*[:은는]?\s*['\"]?([SABCD])\b",
+            r"GRADE\s*[:]?\s*([SABCD])\b",
+            r"\*\*([SABCD])\*\*",
+        ]
+        upper = text.upper()
+        for pattern in patterns:
+            match = re.search(pattern, upper)
+            if match:
+                return match.group(1)
+        return None
+
     def _extract_grade_from_consensus(self, consensus: str) -> str:
-        """합의안에서 등급 추출"""
-        consensus_upper = consensus.upper()
-        
-        for grade in ['S', 'A', 'B', 'C', 'D']:
-            if f"{grade}등급" in consensus or f"등급 {grade}" in consensus or f"등급:{grade}" in consensus:
-                return grade
-        
-        return 'B'
+        """합의안에서 등급 추출 (실패 시 경고 후 중립 등급 B)"""
+        grade = self._try_extract_grade(consensus)
+        if grade is None:
+            print("⚠️ 합의문에서 등급 표기를 찾지 못해 중립 등급(B)으로 처리합니다.")
+            return 'B'
+        return grade
+
+    def _calculate_agreement_confidence(self, opinions: Dict) -> int:
+        """전문가 의견 간 등급 일치도를 확신도(%)로 환산
+
+        전원 일치 90, 2/3 일치 약 77, 전원 불일치 63, 등급 추출 실패 시 50.
+        """
+        grades = [g for g in (self._try_extract_grade(op) for op in opinions.values()) if g]
+        if not grades:
+            return 50
+        most_common = max(set(grades), key=grades.count)
+        agreement_ratio = grades.count(most_common) / len(grades)
+        return int(50 + 40 * agreement_ratio)
 
     def _calculate_basic_ratios(self, financial_data: Dict, multi_year_data: Dict = None) -> Dict:
         """기본 재무비율 계산"""
