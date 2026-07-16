@@ -87,10 +87,13 @@ class AdvancedAuditAgent:
             "prompt": prompt,
             "stream": False,
             "options": {
+                # temperature 0.7 유지: 실행 간 등급 변동은 버그가 아니라
+                # 등급 분포(불확실성 신호)를 만드는 원료로 사용함
                 "temperature": 0.7,
                 "top_p": 0.9,
                 "top_k": 40,
-                "num_predict": 2000
+                # 의견은 등급 + 핵심 근거면 충분 — 길이 제한으로 응답 시간 단축
+                "num_predict": 600
             }
         }
         
@@ -429,6 +432,7 @@ class AdvancedAuditAgent:
         enhanced_ratios = basic_ratios.copy()
         enhanced_ratios.update({
             'A2A_투자등급': discussion_results['investment_grade'],
+            'A2A_등급분포': discussion_results['grade_distribution'],
             'A2A_토론결과': discussion_results['final_consensus'],
             'A2A_확신도': discussion_results['confidence_level'],
             'A2A_분석시간': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -451,6 +455,7 @@ class AdvancedAuditAgent:
         enhanced_fraud_ratios = basic_indicators.copy()
         enhanced_fraud_ratios.update({
             'A2A_부정위험등급': fraud_discussion['risk_grade'],
+            'A2A_위험등급분포': fraud_discussion['grade_distribution'],
             'A2A_위험토론결과': fraud_discussion['final_consensus'],
             'A2A_위험확신도': fraud_discussion['confidence_level'],
             'A2A_분석시간': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -529,13 +534,18 @@ class AdvancedAuditAgent:
 
     # === A2A 협업 핵심 로직 ===
     
-    def _run_discussion_rounds(self, opinions: Dict, topic: str, rounds: int = 2) -> Dict:
+    def _run_discussion_rounds(self, opinions: Dict, topic: str, rounds: int = 2):
         """스냅샷 기반 토론 라운드 진행
 
         매 라운드마다 '직전 라운드' 의견의 스냅샷을 만들어 전원에게 동일하게 보여주고,
         각자 의견을 수정하게 한다. 수정본을 즉시 덮어쓰지 않으므로 발언 순서에 따른
         정보 비대칭(뒤 순서일수록 최신 정보를 더 많이 보는 문제)이 발생하지 않는다.
+
+        반환: (최종 의견 dict, 전체 의견 표본 list)
+        표본에는 초기 의견과 각 라운드의 수정 의견이 모두 포함되며,
+        등급 분포(불확실성 신호) 집계에 사용된다.
         """
+        samples = list(opinions.values())  # 초기 의견도 표본에 포함
         for round_num in range(1, rounds + 1):
             print(f"🗣️ {topic} 토론 라운드 {round_num}/{rounds}")
             snapshot = dict(opinions)  # 이번 라운드에서 전원이 공유하는 동일한 스냅샷
@@ -557,7 +567,38 @@ class AdvancedAuditAgent:
 """
                 updated[agent_key] = self._call_agent_with_persona(agent_key, discussion_prompt)
             opinions = updated
-        return opinions
+            samples.extend(updated.values())
+        return opinions, samples
+
+    def _build_grade_distribution(self, samples: List[str]) -> Dict[str, int]:
+        """의견 표본들에서 등급을 추출해 분포(등급별 표 수)를 만든다
+
+        토론 과정에서 이미 생성된 의견들을 재활용하므로 추가 LLM 호출 비용이 없다.
+        분포는 'AI 판정이 얼마나 한쪽으로 모였는지'를 사람이 보고 판단하는 신호로 쓴다.
+        """
+        distribution: Dict[str, int] = {}
+        for sample in samples:
+            grade = self._try_extract_grade(sample)
+            if grade:
+                distribution[grade] = distribution.get(grade, 0) + 1
+        return distribution
+
+    @staticmethod
+    def _format_distribution(distribution: Dict[str, int]) -> str:
+        """등급 분포를 사람이 읽기 좋은 문자열로 변환 (예: 'B 6표 · A 2표 · C 1표')"""
+        if not distribution:
+            return "표본 없음"
+        ordered = sorted(distribution.items(), key=lambda x: -x[1])
+        return " · ".join(f"{grade} {count}표" for grade, count in ordered)
+
+    @staticmethod
+    def _distribution_confidence(distribution: Dict[str, int]) -> int:
+        """분포의 쏠림 정도를 확신도(%)로 환산: 전원 일치 90 ~ 완전 분산 50"""
+        total = sum(distribution.values())
+        if total == 0:
+            return 50
+        top = max(distribution.values())
+        return int(50 + 40 * (top / total))
 
     def _conduct_ratio_discussion(self, ratios: Dict, financial_data: Dict) -> Dict:
         """재무비율 A2A 토론"""
@@ -574,21 +615,27 @@ class AdvancedAuditAgent:
 - 영업이익률: {ratios.get('영업이익률', 0):.2f}%
 - 순이익률: {ratios.get('순이익률', 0):.2f}%
 
-당신의 전문 분야 관점에서 투자 등급(S/A/B/C/D)과 근거를 제시해주세요.
+당신의 전문 분야 관점에서 투자 등급과 핵심 근거 3가지 이내를 제시해주세요.
+투자 등급 기준: S(최우수) / A(우수) / B(보통) / C(주의) / D(투자부적격)
 """
             opinion = self._call_agent_with_persona(agent_key, prompt)
             opinions[agent_key] = opinion
 
         # 스냅샷 기반 토론 (2라운드): 전원이 같은 정보를 보고 수정
-        opinions = self._run_discussion_rounds(opinions, "재무비율 투자등급", rounds=2)
+        opinions, samples = self._run_discussion_rounds(opinions, "재무비율 투자등급", rounds=2)
 
-        # 최종 합의 도출
-        final_consensus = self._reach_consensus(opinions, "투자등급")
-        
+        # 토론 전 과정의 의견 표본에서 등급 분포 집계 (불확실성 신호)
+        distribution = self._build_grade_distribution(samples)
+        print(f"📊 투자등급 분포: {self._format_distribution(distribution)}")
+
+        # 최종 합의 도출 (분포를 함께 전달해 다수 근거 + 소수 의견 고려사항 서술 유도)
+        final_consensus = self._reach_consensus(opinions, "투자등급", distribution)
+
         return {
             "final_consensus": final_consensus,
             "investment_grade": self._extract_grade_from_consensus(final_consensus),
-            "confidence_level": self._calculate_agreement_confidence(opinions)
+            "grade_distribution": distribution,
+            "confidence_level": self._distribution_confidence(distribution)
         }
 
     def _conduct_fraud_discussion(self, indicators: Dict, financial_data: Dict) -> Dict:
@@ -604,21 +651,31 @@ class AdvancedAuditAgent:
 - 매출채권 대 매출 비율: {indicators.get('매출채권_대_매출_비율', 0):.2f}%
 - 순이익 양수 현금흐름 음수: {indicators.get('순이익_양수_현금흐름_음수', False)}
 
-부정위험 등급(A/B/C/D)과 근거를 제시해주세요.
+부정위험 등급과 핵심 근거 3가지 이내를 제시해주세요.
+부정위험 등급 기준: A(위험 매우 낮음) / B(위험 낮음) / C(위험 높음) / D(위험 매우 높음)
 """
             opinion = self._call_agent_with_persona(agent_key, prompt)
             risk_opinions[agent_key] = opinion
 
         # 기존에는 초기 의견만 모아 바로 합의로 직행했음 → 상호 검토 라운드 1회 추가
-        risk_opinions = self._run_discussion_rounds(risk_opinions, "부정위험등급", rounds=1)
+        risk_opinions, risk_samples = self._run_discussion_rounds(
+            risk_opinions, "부정위험등급(A=위험 매우 낮음 ~ D=위험 매우 높음)", rounds=1
+        )
+
+        # 등급 분포 집계 (불확실성 신호)
+        risk_distribution = self._build_grade_distribution(risk_samples)
+        print(f"📊 부정위험등급 분포: {self._format_distribution(risk_distribution)}")
 
         print("🕵️ 부정위험 합의 도출")
-        final_risk_consensus = self._reach_consensus(risk_opinions, "부정위험등급")
-        
+        final_risk_consensus = self._reach_consensus(
+            risk_opinions, "부정위험등급(A=위험 매우 낮음 ~ D=위험 매우 높음)", risk_distribution
+        )
+
         return {
             "final_consensus": final_risk_consensus,
             "risk_grade": self._extract_grade_from_consensus(final_risk_consensus),
-            "confidence_level": self._calculate_agreement_confidence(risk_opinions)
+            "grade_distribution": risk_distribution,
+            "confidence_level": self._distribution_confidence(risk_distribution)
         }
 
     def _conduct_final_investment_discussion(self, ratios: Dict, fraud_ratios: Dict, company_name: str) -> Dict:
@@ -682,9 +739,13 @@ class AdvancedAuditAgent:
         
         return response
 
-    def _reach_consensus(self, opinions: Dict, topic: str) -> str:
-        """여러 의견을 바탕으로 합의 도출"""
-        
+    def _reach_consensus(self, opinions: Dict, topic: str, distribution: Optional[Dict[str, int]] = None) -> str:
+        """여러 의견을 바탕으로 합의 도출
+
+        분포가 주어지면 다수 의견의 근거와 함께 '소수 의견 고려사항'을 서술하게 한다.
+        이 도구는 판단을 확정하는 용도가 아니라 회계사의 판단을 보조하는 용도이므로,
+        어떤 조건에서 다른 등급이 가능한지를 함께 보여주는 것이 중요하다.
+        """
         consensus_prompt = f"""
 다음 전문가들의 {topic}에 대한 의견들을 종합하여 최종 합의안을 도출해주세요.
 
@@ -692,12 +753,20 @@ class AdvancedAuditAgent:
 """
         for agent_key, opinion in opinions.items():
             agent_name = self.agents[agent_key]['name']
-            consensus_prompt += f"\n{agent_name}: {opinion[:300]}...\n"
-        
-        consensus_prompt += f"""
-이들 의견을 종합하여 균형잡힌 최종 결론을 제시해주세요.
+            consensus_prompt += f"\n{agent_name}: {opinion[:600]}\n"
+
+        if distribution:
+            consensus_prompt += f"""
+토론 과정에서 나온 등급 판정 분포: {self._format_distribution(distribution)}
 """
-        
+
+        consensus_prompt += f"""
+다음 형식으로 균형잡힌 최종 결론을 제시해주세요:
+1. 최종 등급과 다수 의견의 핵심 근거
+2. 소수 의견 고려사항: 다른 등급으로 볼 수 있는 조건이나 관점이 있다면
+   "~를 중시할 경우 X등급도 가능" 형식으로 명시 (없으면 '해당 없음')
+"""
+
         return self.call_ollama("coordinator", consensus_prompt)
 
     def _try_extract_grade(self, text: str) -> Optional[str]:
@@ -844,9 +913,10 @@ class AdvancedAuditAgent:
 • ROE: {ratios.get('ROE', 0):.1f}%
 
 🏆 AI 협업 최종 결과:
-• 투자 등급: {ratios.get('A2A_투자등급', 'N/A')} (AI 3개 토론 결과)
-• 부정 위험: {fraud_ratios.get('A2A_부정위험등급', 'N/A')} (AI 3개 합의)
-• 최종 확신도: {final_opinion.get('confidence_level', 0)}%
+• 투자 등급: {ratios.get('A2A_투자등급', 'N/A')} (분포: {self._format_distribution(ratios.get('A2A_등급분포', {}))})
+• 부정 위험: {fraud_ratios.get('A2A_부정위험등급', 'N/A')} (분포: {self._format_distribution(fraud_ratios.get('A2A_위험등급분포', {}))})
+• 판정 쏠림 기반 확신도: 투자 {ratios.get('A2A_확신도', 0)}% / 위험 {fraud_ratios.get('A2A_위험확신도', 0)}%
+※ 본 등급은 AI 판단 보조 지표이며, 분포가 분산된 항목일수록 전문가의 직접 검토가 필요합니다.
 
 🗣️ A2A 협업 과정:
 • 총 AI 상호작용: {len(self.discussion_log)}회
