@@ -533,9 +533,39 @@ class AdvancedAuditAgent:
 
     # === A2A 협업 핵심 로직 ===
     
+    def _run_discussion_rounds(self, opinions: Dict, topic: str, rounds: int = 2) -> Dict:
+        """스냅샷 기반 토론 라운드 진행
+
+        매 라운드마다 '직전 라운드' 의견의 스냅샷을 만들어 전원에게 동일하게 보여주고,
+        각자 의견을 수정하게 한다. 수정본을 즉시 덮어쓰지 않으므로 발언 순서에 따른
+        정보 비대칭(뒤 순서일수록 최신 정보를 더 많이 보는 문제)이 발생하지 않는다.
+        """
+        for round_num in range(1, rounds + 1):
+            print(f"🗣️ {topic} 토론 라운드 {round_num}/{rounds}")
+            snapshot = dict(opinions)  # 이번 라운드에서 전원이 공유하는 동일한 스냅샷
+            updated = {}
+            for agent_key in self.agents.keys():
+                other_opinions = [
+                    f"{self.agents[k]['name']}: {v[:600]}"
+                    for k, v in snapshot.items() if k != agent_key
+                ]
+
+                discussion_prompt = f"""
+{topic}에 대한 토론 {round_num}라운드입니다.
+다른 전문가들의 의견을 검토하고, 동의/반박 근거와 함께 당신의 수정된 의견을 제시해주세요.
+
+다른 의견들:
+{chr(10).join(other_opinions)}
+
+수정된 등급과 근거를 명확히 제시해주세요.
+"""
+                updated[agent_key] = self._call_agent_with_persona(agent_key, discussion_prompt)
+            opinions = updated
+        return opinions
+
     def _conduct_ratio_discussion(self, ratios: Dict, financial_data: Dict) -> Dict:
         """재무비율 A2A 토론"""
-        
+
         # 각 AI의 초기 의견 수집
         opinions = {}
         for agent_key, agent in self.agents.items():
@@ -552,23 +582,10 @@ class AdvancedAuditAgent:
 """
             opinion = self._call_agent_with_persona(agent_key, prompt)
             opinions[agent_key] = opinion
-        
-        # 토론 진행 (1라운드)
-        print("🗣️ 재무비율 토론 진행")
-        for agent_key in self.agents.keys():
-            other_opinions = [f"{self.agents[k]['name']}: {v[:150]}..." for k, v in opinions.items() if k != agent_key]
-            
-            discussion_prompt = f"""
-다른 전문가들의 의견을 검토하고 당신의 최종 의견을 제시해주세요.
 
-다른 의견들:
-{chr(10).join(other_opinions)}
+        # 스냅샷 기반 토론 (2라운드): 전원이 같은 정보를 보고 수정
+        opinions = self._run_discussion_rounds(opinions, "재무비율 투자등급", rounds=2)
 
-최종 투자등급과 근거를 명확히 제시해주세요.
-"""
-            updated_opinion = self._call_agent_with_persona(agent_key, discussion_prompt)
-            opinions[agent_key] = updated_opinion
-        
         # 최종 합의 도출
         final_consensus = self._reach_consensus(opinions, "투자등급")
         
@@ -595,8 +612,11 @@ class AdvancedAuditAgent:
 """
             opinion = self._call_agent_with_persona(agent_key, prompt)
             risk_opinions[agent_key] = opinion
-        
-        print("🕵️ 부정위험 토론 진행")
+
+        # 기존에는 초기 의견만 모아 바로 합의로 직행했음 → 상호 검토 라운드 1회 추가
+        risk_opinions = self._run_discussion_rounds(risk_opinions, "부정위험등급", rounds=1)
+
+        print("🕵️ 부정위험 합의 도출")
         final_risk_consensus = self._reach_consensus(risk_opinions, "부정위험등급")
         
         return {
