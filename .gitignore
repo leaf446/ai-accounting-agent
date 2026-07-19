@@ -12,12 +12,16 @@ analysis_results/
 *.png
 *.html
 
+# 문서용 이미지는 커밋 허용 (위의 *.png 차단 예외)
+!docs/images/*.png
+
 # 🐍 Python 관련
 __pycache__/
 *.pyc
 *.pyo
 venv/
 env/
+.venv/
 
 # 💻 운영체제 파일들
 .DS_Store
