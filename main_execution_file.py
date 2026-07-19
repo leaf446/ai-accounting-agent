@@ -9,6 +9,12 @@ import os
 import logging
 from datetime import datetime
 
+# 한글 Windows 콘솔(cp949)은 이모지를 출력할 수 없어 print에서 크래시가 발생함
+# → 표준 출력을 UTF-8로 강제 (표현 불가 문자는 ?로 대체해 크래시 방지)
+for stream in (sys.stdout, sys.stderr):
+    if stream and hasattr(stream, "reconfigure"):
+        stream.reconfigure(encoding="utf-8", errors="replace")
+
 # 현재 디렉토리를 Python 경로에 추가
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
