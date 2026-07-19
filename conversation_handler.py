@@ -170,9 +170,11 @@ class SmartConversationHandler:
         user_input_lower = user_input.lower()
         
         # 각 패턴별 매칭 점수 계산
+        # 입력을 소문자화했으므로 키워드도 소문자로 비교해야 함
+        # (기존에는 "ROE" 같은 대문자 키워드가 영원히 매칭되지 않는 버그가 있었음)
         scores = {}
         for query_type, keywords in self.query_patterns.items():
-            score = sum(1 for keyword in keywords if keyword in user_input_lower)
+            score = sum(1 for keyword in keywords if keyword.lower() in user_input_lower)
             if score > 0:
                 scores[query_type] = score
         
@@ -601,18 +603,39 @@ class SmartConversationHandler:
             return "comprehensive"  # 기본값: 모든 형태
 
     def _handle_general_query(self, user_input: str) -> Dict[str, Any]:
-        """일반 질의 처리"""
-        # AI에게 자유 형식 질문으로 넘김
+        """일반 질의 처리
+
+        분석 결과가 있으면 반드시 컨텍스트로 주입한다. 주입하지 않으면 모델이
+        분석과 무관한 일반론을 지어내는 환각이 발생한다 (예: 실제 분석 결과 대신
+        "이 회사는 재무정보를 공개하지 않지만..." 같은 잘못된 답변).
+        """
+        context_block = ""
+        if self.current_company:
+            context = self.agent.get_analysis_context(self.current_company)
+            if context:
+                ratios = context.get("ratios", {})
+                fraud = context.get("fraud_ratios", {})
+                key_figures = {
+                    k: v for k, v in ratios.items()
+                    if k in ("ROE", "ROA", "부채비율", "영업이익률", "순이익률",
+                             "A2A_투자등급", "A2A_확신도")
+                }
+                context_block = f"""
+[분석 결과 데이터 — 반드시 이 수치에 근거해 답변할 것]
+회사: {self.current_company}
+주요 지표: {key_figures}
+부정위험 등급: {fraud.get('A2A_부정위험등급', 'N/A')} (확신도 {fraud.get('A2A_위험확신도', 'N/A')}%)
+"""
+
         general_prompt = f"""
-    사용자가 다음과 같이 질문했습니다: "{user_input}"
+사용자가 다음과 같이 질문했습니다: "{user_input}"
+{context_block}
+위 분석 결과 데이터가 있다면 그 수치에 근거해서 회계/재무 전문가 관점으로 답변해주세요.
+분석 데이터가 없다면 일반론을 지어내지 말고, 먼저 회사 분석을 실행하도록 안내해주세요.
+"""
 
-    현재 분석 중인 회사: {self.current_company or "없음"}
-
-    이 질문에 대해 회계/재무 전문가 관점에서 도움이 되는 답변을 제공해주세요.
-    """
-        
         response = self.agent.call_ollama("coordinator", general_prompt)
-        
+
         return {
             "type": "general_response",
             "message": response,
