@@ -90,23 +90,26 @@ class ModernAccountingGUI:
             pass
         return ""
 
+    WINDOW_WIDTH = 1380
+    WINDOW_HEIGHT = 860
+
     def setup_window(self):
         """메인 윈도우 설정"""
         self.root.title("🏛️ AI 기반 회계 분석 시스템 - 보고서 생성 통합")
-        self.root.geometry("1700x1000")
-        self.root.minsize(1500, 900)
-        
+        self.root.geometry(f"{self.WINDOW_WIDTH}x{self.WINDOW_HEIGHT}")
+        self.root.minsize(1200, 780)
+
         # 윈도우 중앙 배치
         self.center_window()
-        
+
         # 종료 이벤트 바인딩
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def center_window(self):
         """윈도우를 화면 중앙에 배치"""
         self.root.update_idletasks()
-        width = 1700
-        height = 1000
+        width = self.WINDOW_WIDTH
+        height = self.WINDOW_HEIGHT
         x = (self.root.winfo_screenwidth() // 2) - (width // 2)
         y = (self.root.winfo_screenheight() // 2) - (height // 2)
         self.root.geometry(f"{width}x{height}+{x}+{y}")
@@ -405,28 +408,13 @@ class ModernAccountingGUI:
             wrap="word"
         )
         
-        # 하단 상태바
-        self.status_frame = ctk.CTkFrame(self.main_frame)
-        self.status_label = ctk.CTkLabel(
-            self.status_frame,
-            text="시스템 준비됨",
-            font=ctk.CTkFont(size=11)
-        )
-        
+        # AI 모델 상태 표시 (헤더의 연결 상태 옆에 배치)
         self.model_status = ctk.CTkLabel(
-            self.status_frame,
-            text="AI 모델: 미연결",
-            font=ctk.CTkFont(size=11)
-        )
-        
-        self.time_label = ctk.CTkLabel(
-            self.status_frame,
+            self.api_frame,
             text="",
-            font=ctk.CTkFont(size=11)
+            font=ctk.CTkFont(size=11),
+            text_color="gray"
         )
-        
-        # 시간 업데이트
-        self.update_time()
 
     def setup_layout(self):
         """레이아웃 배치"""
@@ -447,11 +435,12 @@ class ModernAccountingGUI:
         self.api_entry.pack(side="left", padx=8)
         self.connect_button.pack(side="left", padx=8)
         self.connection_status.pack(side="left", padx=(15, 0))
+        self.model_status.pack(side="left", padx=(15, 0))
         
-        # 메인 컨텐츠 영역 (3열 레이아웃)
-        content_frame = ctk.CTkFrame(self.main_frame)
-        content_frame.pack(fill="both", expand=True, pady=15)
-        
+        # 메인 컨텐츠 영역 — 3개 패널이 main_frame에 직접 배치됨
+        # (기존에는 비어있는 content_frame이 함께 pack되어 헤더와 본문 사이에
+        #  내용 없는 빈 박스로 표시되던 문제가 있었음)
+
         # 좌측 패널 (320px - 조금 더 넓게)
         self.left_panel.pack(side="left", fill="y", padx=(0, 8))
         
@@ -528,11 +517,7 @@ class ModernAccountingGUI:
         self.ratios_frame.pack(fill="both", expand=True, padx=8, pady=8)
         self.reports_text.pack(fill="both", expand=True, padx=8, pady=8)
         
-        # 하단 상태바
-        self.status_frame.pack(fill="x", pady=(15, 0))
-        self.status_label.pack(side="left", padx=15)
-        self.model_status.pack(side="right", padx=15)
-        self.time_label.pack(side="right", padx=(0, 150))
+        # (하단 상태바 제거됨 — 모델 정보는 헤더의 연결 상태 옆에 표시)
 
     def setup_bindings(self):
         """이벤트 바인딩 설정"""
@@ -571,7 +556,10 @@ class ModernAccountingGUI:
                 self.root.after(0, self.connection_success)
                 
             except Exception as e:
-                self.root.after(0, lambda: self.connection_failed(str(e)))
+                # except 블록을 벗어나면 'e'가 자동 해제되므로, 지연 실행되는
+                # lambda가 참조하기 전에 메시지를 문자열로 미리 복사해둬야 함
+                error_message = str(e)
+                self.root.after(0, lambda: self.connection_failed(error_message))
         
         threading.Thread(target=connect_thread, daemon=True).start()
 
@@ -579,7 +567,7 @@ class ModernAccountingGUI:
         """연결 성공 처리"""
         self.is_connected = True
         self.connection_status.configure(text="● 연결됨", text_color="green")
-        self.model_status.configure(text="AI 모델: llama3.1 + qwen2.5 + mistral")
+        self.model_status.configure(text="🤖 llama3.1 · qwen3 · exaone3.5")
         
         # API 키 숨기기 및 비활성화
         self.api_entry.configure(show="*", state="disabled")
@@ -628,7 +616,8 @@ class ModernAccountingGUI:
                     self.root.after(0, lambda: self.search_failed(company_name))
                     
             except Exception as e:
-                self.root.after(0, lambda: self.search_error(str(e)))
+                error_message = str(e)
+                self.root.after(0, lambda: self.search_error(error_message))
         
         threading.Thread(target=search_thread, daemon=True).start()
 
@@ -686,24 +675,41 @@ class ModernAccountingGUI:
                     raise Exception(f"{self.current_company}의 기업코드를 찾을 수 없습니다.")
                 
                 # 재무제표 수집
-                self.root.after(0, lambda: self.update_progress(30, "DART에서 재무제표 수집 중..."))
+                self.root.after(0, lambda: self.update_progress(8, "DART에서 재무제표 수집 중..."))
                 financial_data = self.agent.get_financial_statements(corp_code)
-                
-                # 현금흐름표 수집  
-                self.root.after(0, lambda: self.update_progress(50, "DART에서 현금흐름표 수집 중..."))
+
+                # 재무 데이터가 없으면 0으로 분석하지 않고 즉시 중단
+                if not financial_data:
+                    raise Exception(
+                        f"{self.current_company}의 재무제표를 DART에서 조회할 수 없습니다.\n"
+                        f"비상장사이거나 사업보고서 공시 대상이 아닐 수 있습니다."
+                    )
+
+                # 현금흐름표 수집
+                self.root.after(0, lambda: self.update_progress(14, "DART에서 현금흐름표 수집 중..."))
                 cash_flow_data = self.agent.get_cash_flow_statement(corp_code)
-                
+
                 # 다년도 데이터 수집
-                self.root.after(0, lambda: self.update_progress(70, "다년도 데이터 수집 중..."))
-                multi_year_data = self.agent.get_multi_year_financials(corp_code, ['2024', '2023'])
-                
-                # 재무비율 계산
-                self.root.after(0, lambda: self.update_progress(85, "재무비율 계산 중..."))
+                self.root.after(0, lambda: self.update_progress(20, "다년도 데이터 수집 중..."))
+                multi_year_data = self.agent.get_multi_year_financials(corp_code)
+
+                # AI 토론 구간: 엔진의 LLM 호출 콜백이 25%→95% 구간을 실제 진행에 맞춰 채움
+                # (GUI 분석 흐름의 총 LLM 호출 = 재무 토론 10회 + 부정 토론 7회 = 17회)
+                self.agent._llm_calls_done = 0
+                total_llm_calls = 17
+                self.agent.progress_callback = lambda msg, done: self.root.after(
+                    0, self.update_progress,
+                    25 + int(70 * min(done, total_llm_calls) / total_llm_calls),
+                    f"{msg} ({min(done, total_llm_calls)}/{total_llm_calls})"
+                )
+
+                # 재무비율 계산 + A2A 토론
                 ratios = self.agent.calculate_comprehensive_ratios(financial_data, multi_year_data)
-                
-                # 부정위험 분석
-                self.root.after(0, lambda: self.update_progress(95, "부정 위험 분석 중..."))
+
+                # 부정위험 분석 + A2A 토론
                 fraud_ratios = self.agent.calculate_fraud_detection_ratios(financial_data, cash_flow_data)
+
+                self.agent.progress_callback = None
                 
                 # 결과 정리
                 self.root.after(0, lambda: self.update_progress(100, "분석 완료!"))
@@ -726,9 +732,10 @@ class ModernAccountingGUI:
                 self.root.after(0, lambda: self.display_analysis_results(analysis_data))
                 
             except Exception as e:
-                print(f"❌ 분석 오류: {str(e)}")
-                self.root.after(0, lambda: self.analysis_error(str(e)))
-        
+                error_message = str(e)
+                print(f"❌ 분석 오류: {error_message}")
+                self.root.after(0, lambda: self.analysis_error(error_message))
+
         threading.Thread(target=real_analysis_thread, daemon=True).start()
 
     def update_progress(self, percentage, status_text):
@@ -898,7 +905,8 @@ class ModernAccountingGUI:
                 self.root.after(0, lambda: self.handle_report_response(response, "DOCX"))
                 
             except Exception as e:
-                self.root.after(0, lambda: self.report_generation_error(str(e)))
+                error_message = str(e)
+                self.root.after(0, lambda: self.report_generation_error(error_message))
         
         threading.Thread(target=generate_thread, daemon=True).start()
 
@@ -919,7 +927,8 @@ class ModernAccountingGUI:
                 self.root.after(0, lambda: self.handle_report_response(response, "Excel"))
                 
             except Exception as e:
-                self.root.after(0, lambda: self.report_generation_error(str(e)))
+                error_message = str(e)
+                self.root.after(0, lambda: self.report_generation_error(error_message))
         
         threading.Thread(target=generate_thread, daemon=True).start()
 
@@ -942,7 +951,8 @@ class ModernAccountingGUI:
                 self.root.after(0, lambda: self.handle_direct_report_response(reports))
                 
             except Exception as e:
-                self.root.after(0, lambda: self.report_generation_error(str(e)))
+                error_message = str(e)
+                self.root.after(0, lambda: self.report_generation_error(error_message))
         
         threading.Thread(target=generate_thread, daemon=True).start()
 
@@ -1189,12 +1199,6 @@ class ModernAccountingGUI:
             
         except Exception as e:
             print(f"메시지 제거 오류: {e}")
-
-    def update_time(self):
-        """시간 업데이트"""
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.time_label.configure(text=current_time)
-        self.root.after(1000, self.update_time)
 
     def on_closing(self):
         """프로그램 종료 시 정리"""
