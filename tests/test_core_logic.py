@@ -46,13 +46,24 @@ class TestRatioCalculation:
         ratios = agent._calculate_basic_ratios({"net_income": 100, "total_equity": 0})
         assert ratios["ROE"] == 0
 
-    def test_growth_requires_prior_year(self, agent):
+    def test_growth_uses_second_latest_year(self, agent):
+        """성장률은 다년도 데이터의 최신 연도 대비 직전 연도로 계산 (연도 동적 결정)"""
         financial_data = {"revenue": 1100, "net_income": 90}
-        multi_year = {"2023": {"revenue": 1000, "net_income": 100}}
+        multi_year = {
+            "2025": {"revenue": 1100, "net_income": 90},
+            "2024": {"revenue": 1000, "net_income": 100},
+        }
         ratios = agent._calculate_basic_ratios(financial_data, multi_year)
 
         assert ratios["매출성장률"] == pytest.approx(10.0)
         assert ratios["순이익성장률"] == pytest.approx(-10.0)
+
+    def test_growth_skipped_with_single_year(self, agent):
+        """직전 연도 데이터가 없으면 성장률 항목 자체를 만들지 않음"""
+        ratios = agent._calculate_basic_ratios(
+            {"revenue": 1100}, {"2025": {"revenue": 1100}}
+        )
+        assert "매출성장률" not in ratios
 
 
 class TestFraudIndicators:

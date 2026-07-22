@@ -52,6 +52,9 @@ class AdvancedAuditAgent:
         }
         
         self.current_loaded_model = None
+        # GUI 등 외부에서 진행 상황을 받아볼 수 있는 콜백 (message, llm_calls_done)
+        self.progress_callback = None
+        self._llm_calls_done = 0
         self.work_directory = "analysis_results"
         self.agent_log = []
         self.conversation_memory = {}
@@ -85,6 +88,12 @@ class AdvancedAuditAgent:
         """Ollama API 호출"""
         model_name = self.agents[model_key]["model"]
         self.load_model(model_name)
+
+        # 진행 콜백: LLM 호출 단위로 실제 진행 상황을 알림 (긴 토론 구간의 체감 개선)
+        self._llm_calls_done += 1
+        if self.progress_callback:
+            agent_name = self.agents[model_key]["name"]
+            self.progress_callback(f"{agent_name} · {model_name} 응답 생성 중", self._llm_calls_done)
         
         data = {
             "model": model_name,
@@ -189,67 +198,94 @@ class AdvancedAuditAgent:
         candidates = [value for key, value in major_companies.items() if company_name in key or key in company_name]
         return {"candidates": candidates, "exact_match": False} if candidates else None
 
-    def get_financial_statements(self, corp_code: str, year: str = "2024") -> Dict:
-        """재무제표 조회 (개선된 파싱)"""
-        print(f"📊 {year}년 재무제표 조회 중...")
-        
-        url = f"{self.dart_base_url}/fnlttSinglAcntAll.json"
-        params = {
-            'crtfc_key': self.dart_api_key,
-            'corp_code': corp_code,
-            'bsns_year': year,
-            'reprt_code': '11011',
-            'fs_div': 'CFS'
-        }
-        
-        try:
-            response = requests.get(url, params=params, timeout=15)
-            if response.status_code == 200:
-                data = response.json()
-                print(f"📊 DART API 응답 상태: {data.get('status')}")
-                if data['status'] == '000' and data['list']:
-                    print(f"📋 수집된 재무 항목 수: {len(data['list'])}개")
-                    return self.parse_financial_statements(data['list'])
-                else:
-                    print(f"❌ {year}년 재무데이터 없음: {data.get('message')}")
-                    return {}
-            else:
-                return {}
-        except Exception as e:
-            print(f"❌ 재무제표 조회 오류: {str(e)}")
+    @staticmethod
+    def _report_year_candidates() -> List[str]:
+        """조회를 시도할 사업보고서 연도 목록 (최신순)
+
+        사업보고서는 통상 다음 해 3월에 공시되므로 실행 시점의 직전 연도가
+        최신 후보이며, 연초처럼 아직 미공시인 경우 그 전 연도로 폴백한다.
+        """
+        latest = datetime.now().year - 1
+        return [str(latest), str(latest - 1)]
+
+    def get_financial_statements(self, corp_code: str, year: Optional[str] = None) -> Dict:
+        """재무제표 조회. year 미지정 시 공시된 최신 연도를 자동 탐색"""
+        if year is None:
+            for candidate in self._report_year_candidates():
+                data = self.get_financial_statements(corp_code, candidate)
+                if data:
+                    return data
+                print(f"ℹ️ {candidate}년 사업보고서 미공시 — 직전 연도로 폴백")
             return {}
 
-    def get_cash_flow_statement(self, corp_code: str, year: str = "2024") -> Dict:
-        """현금흐름표 조회"""
-        print(f"💰 {year}년 현금흐름표 조회 중...")
-        
+        print(f"📊 {year}년 재무제표 조회 중...")
+
         url = f"{self.dart_base_url}/fnlttSinglAcntAll.json"
-        params = {
-            'crtfc_key': self.dart_api_key,
-            'corp_code': corp_code,
-            'bsns_year': year,
-            'reprt_code': '11011',
-            'fs_div': 'CFS'
-        }
-        
-        try:
-            response = requests.get(url, params=params, timeout=15)
-            if response.status_code == 200:
+
+        # 연결재무제표(CFS) 우선, 없으면 별도재무제표(OFS)로 폴백
+        # (자회사가 없거나 연결 공시가 없는 회사는 OFS만 존재)
+        for fs_div in ('CFS', 'OFS'):
+            params = {
+                'crtfc_key': self.dart_api_key,
+                'corp_code': corp_code,
+                'bsns_year': year,
+                'reprt_code': '11011',
+                'fs_div': fs_div
+            }
+
+            try:
+                response = requests.get(url, params=params, timeout=15)
+                if response.status_code != 200:
+                    continue
+                data = response.json()
+                if data['status'] == '000' and data['list']:
+                    print(f"📋 수집된 재무 항목 수: {len(data['list'])}개 ({fs_div})")
+                    return self.parse_financial_statements(data['list'])
+                print(f"❌ {year}년 {fs_div} 재무데이터 없음: {data.get('message')}")
+            except Exception as e:
+                print(f"❌ 재무제표 조회 오류: {str(e)}")
+
+        return {}
+
+    def get_cash_flow_statement(self, corp_code: str, year: Optional[str] = None) -> Dict:
+        """현금흐름표 조회. year 미지정 시 공시된 최신 연도를 자동 탐색"""
+        if year is None:
+            for candidate in self._report_year_candidates():
+                data = self.get_cash_flow_statement(corp_code, candidate)
+                if data:
+                    return data
+            return {}
+
+        print(f"💰 {year}년 현금흐름표 조회 중...")
+
+        url = f"{self.dart_base_url}/fnlttSinglAcntAll.json"
+
+        for fs_div in ('CFS', 'OFS'):
+            params = {
+                'crtfc_key': self.dart_api_key,
+                'corp_code': corp_code,
+                'bsns_year': year,
+                'reprt_code': '11011',
+                'fs_div': fs_div
+            }
+
+            try:
+                response = requests.get(url, params=params, timeout=15)
+                if response.status_code != 200:
+                    continue
                 data = response.json()
                 if data['status'] == '000' and data['list']:
                     return self.parse_cash_flow_data(data['list'])
-                else:
-                    return {}
-            else:
-                return {}
-        except Exception as e:
-            print(f"❌ 현금흐름표 조회 오류: {str(e)}")
-            return {}
+            except Exception as e:
+                print(f"❌ 현금흐름표 조회 오류: {str(e)}")
+
+        return {}
 
     def get_multi_year_financials(self, corp_code: str, years: List[str] = None) -> Dict:
-        """다년도 재무 데이터 조회"""
+        """다년도 재무 데이터 조회. years 미지정 시 최신 공시 연도부터 3개년"""
         if years is None:
-            years = ['2024', '2023', '2022']
+            latest = datetime.now().year - 1
+            years = [str(latest), str(latest - 1), str(latest - 2)]
         
         print(f"📅 {len(years)}년간 재무 데이터 조회 중...")
         
@@ -492,9 +528,16 @@ class AdvancedAuditAgent:
             
             corp_code = company_info.get("corp_code")
             financial_data = self.get_financial_statements(corp_code)
+
+            # 재무 데이터가 없으면 0으로 분석을 진행하지 않고 명확히 중단
+            # (비상장사 등 이 API로 조회 불가한 회사에서 전항목 0 분석이 나오던 버그 방지)
+            if not financial_data:
+                return {"error": f"'{company_name}'의 재무제표를 DART에서 조회할 수 없습니다. "
+                                 f"비상장사이거나 사업보고서 공시 대상이 아닐 수 있습니다."}
+
             cash_flow_data = self.get_cash_flow_statement(corp_code)
             multi_year_data = self.get_multi_year_financials(corp_code)
-            
+
             # 3단계: A2A 협업 재무비율 분석 (항상 실행)
             print("🤖 A2A 재무비율 협업 분석...")
             ratios = self.calculate_comprehensive_ratios(financial_data, multi_year_data)
@@ -839,9 +882,10 @@ class AdvancedAuditAgent:
         ratios['부채비율'] = safe_divide(total_liabilities, total_equity) * 100
         ratios['자기자본비율'] = safe_divide(total_equity, total_assets) * 100
         
-        # 성장성 비율 (다년도 데이터 활용)
-        if multi_year_data and '2023' in multi_year_data:
-            prev_data = multi_year_data['2023']
+        # 성장성 비율 (다년도 데이터에서 직전 연도 대비 — 연도는 동적으로 결정)
+        if multi_year_data and len(multi_year_data) >= 2:
+            prev_year = sorted(multi_year_data.keys())[-2]
+            prev_data = multi_year_data[prev_year]
             prev_revenue = prev_data.get('revenue', 0)
             prev_net_income = prev_data.get('net_income', 0)
             
