@@ -82,9 +82,13 @@ class ProfessionalReportGenerator:
         # 문서 기본 설정
         self._setup_document_format(doc)
         
+        # 분석 기준 연도: 실제 수집된 다년도 데이터의 최신 연도 사용
+        multi_year = analysis_data.get("multi_year_data", {}) or {}
+        basis_year = max(multi_year.keys()) if multi_year else str(datetime.now().year - 1)
+
         # 표지 생성
-        self._create_cover_page(doc, company_name, "종합 재무 분석 보고서", 
-                               "Comprehensive Financial Analysis Report")
+        self._create_cover_page(doc, company_name, "종합 재무 분석 보고서",
+                               "Comprehensive Financial Analysis Report", basis_year)
         
         # 페이지 나누기
         doc.add_page_break()
@@ -131,9 +135,11 @@ class ProfessionalReportGenerator:
             section.left_margin = Inches(1.2)
             section.right_margin = Inches(1)
 
-    def _create_cover_page(self, doc: Document, company_name: str, 
-                          title: str, subtitle: str):
+    def _create_cover_page(self, doc: Document, company_name: str,
+                          title: str, subtitle: str, basis_year: str = None):
         """표지 페이지 생성"""
+        if basis_year is None:
+            basis_year = str(datetime.now().year - 1)
         
         # 로고 공간 (텍스트로 대체)
         logo_para = doc.add_paragraph()
@@ -143,10 +149,10 @@ class ProfessionalReportGenerator:
         logo_run.font.bold = True
         logo_run.font.color.rgb = self.color_scheme["primary"]
         
-        # 공백
-        for _ in range(3):
+        # 공백 (과다한 공백은 표지가 2페이지로 넘치는 원인이 되므로 최소화)
+        for _ in range(2):
             doc.add_paragraph()
-        
+
         # 메인 제목
         title_para = doc.add_paragraph()
         title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -179,9 +185,9 @@ class ProfessionalReportGenerator:
         company_run.font.color.rgb = self.color_scheme["accent"]
         
         # 공백
-        for _ in range(4):
+        for _ in range(2):
             doc.add_paragraph()
-        
+
         # 보고서 정보 테이블
         info_table = doc.add_table(rows=4, cols=2)
         info_table.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -189,7 +195,7 @@ class ProfessionalReportGenerator:
         # 테이블 내용
         info_data = [
             ("보고서 생성일", datetime.now().strftime("%Y년 %m월 %d일")),
-            ("분석 기준일", "2024년 12월 31일"),
+            ("분석 기준", f"{basis_year} 회계연도 사업보고서"),
             ("데이터 출처", "DART 전자공시시스템"),
             ("생성 시스템", "AI 기반 자동 분석 시스템")
         ]
@@ -212,7 +218,7 @@ class ProfessionalReportGenerator:
                     run.font.bold = True
         
         # 하단 면책조항
-        for _ in range(3):
+        for _ in range(2):
             doc.add_paragraph()
         disclaimer_para = doc.add_paragraph()
         disclaimer_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -224,8 +230,12 @@ class ProfessionalReportGenerator:
         disclaimer_run.font.color.rgb = self.color_scheme["text_secondary"]
 
     def _create_table_of_contents(self, doc: Document):
-        """목차 생성 (Word 필드 기반)"""
-        
+        """목차 생성 (정적 방식)
+
+        Word TOC 필드는 본문 제목이 Heading 스타일이 아니면 F9로도 채워지지 않고,
+        사용자가 필드 갱신을 해야 하는 부담이 있음. 섹션 구성을 생성 시점에
+        이미 알고 있으므로 바로 보이는 정적 목차를 삽입한다.
+        """
         # 목차 제목
         toc_title = doc.add_paragraph()
         toc_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -234,26 +244,33 @@ class ProfessionalReportGenerator:
         toc_run.font.size = Pt(18)
         toc_run.font.bold = True
         toc_run.font.color.rgb = self.color_scheme["primary"]
-        
+
         doc.add_paragraph()
-        
-        # Word TOC 필드 삽입
-        paragraph = doc.add_paragraph()
-        run = paragraph.add_run()
-        fldChar = OxmlElement('w:fldChar')  # creates a new element
-        fldChar.set(qn('w:fldCharType'), 'begin')  # sets attribute on element
-        run._r.append(fldChar)
-        
-        instrText = OxmlElement('w:instrText')
-        instrText.set(qn('xml:space'), 'preserve')  # sets attribute on element
-        instrText.text = "TOC \\o \"1-3\" \\h \\z \\u"  # field code
-        run._r.append(instrText)
-        
-        fldChar = OxmlElement('w:fldChar')
-        fldChar.set(qn('w:fldCharType'), 'end')
-        run._r.append(fldChar)
-        
-        doc.add_paragraph("\n\n(목차를 업데이트하려면 Word에서 F9 키를 누르세요.)").alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        toc_entries = [
+            ("1. 요약", "Executive Summary"),
+            ("2. 재무현황 분석", "Financial Status Analysis"),
+            ("3. 위험 분석", "Risk Analysis"),
+            ("4. 권고사항", "Recommendations"),
+            ("5. 부록", "Appendix"),
+        ]
+
+        for korean, english in toc_entries:
+            entry = doc.add_paragraph()
+            entry.paragraph_format.space_after = Pt(14)
+            entry.paragraph_format.left_indent = Inches(1.0)
+
+            run = entry.add_run(korean)
+            run.font.name = 'Malgun Gothic'
+            run.font.size = Pt(14)
+            run.font.bold = True
+            run.font.color.rgb = self.color_scheme["text_primary"]
+
+            sub_run = entry.add_run(f"  ·  {english}")
+            sub_run.font.name = 'Calibri'
+            sub_run.font.size = Pt(11)
+            sub_run.font.italic = True
+            sub_run.font.color.rgb = self.color_scheme["text_secondary"]
 
     def _create_executive_summary_section(self, doc: Document, analysis_data: Dict, company_name: str):
         """경영진 요약 섹션"""
