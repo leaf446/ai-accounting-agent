@@ -780,10 +780,12 @@ class AdvancedAuditAgent:
     def _try_extract_grade(self, text: str) -> Optional[str]:
         """텍스트에서 등급(S/A/B/C/D) 추출 시도. 실패 시 None"""
         # "A등급", "등급 A", "등급: A", "투자등급은 B", "Grade A", "**B**" 등 다양한 표기 대응
+        # 주의: \b는 한글을 단어 문자로 취급해 "S를"처럼 조사가 붙으면 실패함
+        # → 뒤에 라틴 문자가 더 없으면 매칭되도록 (?![A-Z]) 사용
         patterns = [
             r"([SABCD])\s*등급",
-            r"등급\s*[:은는]?\s*['\"]?([SABCD])\b",
-            r"GRADE\s*[:]?\s*([SABCD])\b",
+            r"등급\s*[:은는]?\s*['\"]?([SABCD])(?![A-Z])",
+            r"GRADE\s*[:]?\s*([SABCD])(?![A-Z])",
             r"\*\*([SABCD])\*\*",
         ]
         upper = text.upper()

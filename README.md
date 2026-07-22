@@ -1,5 +1,7 @@
 # AI 회계 분석 시스템 (A2A Accounting Agent)
 
+[![CI](https://github.com/leaf446/ai-accounting-agent/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/leaf446/ai-accounting-agent/actions/workflows/ci.yml)
+
 > **오픈소스 LLM 3개가 토론하고, 판단의 불확실성까지 보여주는 재무 분석 도구**
 > 금감원 DART 공시 데이터를 수집해 로컬 LLM(Ollama) 3개가 협업 분석하고,
 > 회계 전문가가 검토할 수 있는 보고서를 생성합니다. 모든 AI 추론은 로컬에서 실행됩니다.
@@ -114,8 +116,9 @@ GUI에서 "연결" 클릭 → 회사명 검색(예: 삼성전자) → AI 분석 
   구조적으로 병렬화 가능하지만 단일 GPU에서는 이득이 없어 순차 처리합니다.
 - **LLM 등급 판정은 참고용** — 지표 계산은 결정론적이지만 해석·등급은
   LLM 판단이므로, 분포·소수 의견과 함께 전문가 검토를 전제로 합니다.
-- **테스트·CI 정비 진행 중** — 핵심 로직 단위 테스트와 GitHub Actions
-  파이프라인을 추가할 예정입니다.
+- **LLM 응답 품질 테스트의 한계** — 결정론적 로직(비율 계산, 등급 추출,
+  분포 집계)은 단위 테스트로 검증하지만, LLM 토론의 내용 품질 자체는
+  자동 테스트가 어려워 스모크 테스트와 수동 검증에 의존합니다.
 
 ## 최근 개선 이력 (2026-07)
 
