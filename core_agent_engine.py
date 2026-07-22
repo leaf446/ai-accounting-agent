@@ -34,13 +34,17 @@ class AdvancedAuditAgent:
                 "personality": "신중하고 균형잡힌 시각, 갈등 조정 전문가"
             },
             "financial_analyst": {
-                "model": "qwen2.5:7b",
+                # qwen2.5:7b → qwen3:8b (2026-07 교체: 후속 세대, 추론·한국어 개선)
+                "model": "qwen3:8b",
                 "name": "이정확 (재무분석가)",
                 "role": "재무분석 및 비율 해석 전문가",
                 "personality": "정확하고 분석적, 데이터 기반 판단"
             },
             "fraud_detective": {
-                "model": "mistral:7b",
+                # mistral:7b → exaone3.5:7.8b (2026-07 교체: 2023년 모델로 한국어가
+                # 약해 최약체였음. EXAONE은 한국어 특화 + 8GB VRAM 적합.
+                # Solar 계열도 검토했으나 10.7B는 동세대 구형, Pro는 VRAM 초과로 제외)
+                "model": "exaone3.5:7.8b",
                 "name": "박의심 (부정탐지전문가)",
                 "role": "부정탐지 및 위험평가 전문가",
                 "personality": "의심 많고 철저함, 보수적 접근"
@@ -86,6 +90,9 @@ class AdvancedAuditAgent:
             "model": model_name,
             "prompt": prompt,
             "stream": False,
+            # qwen3는 기본으로 사고(thinking) 토큰을 먼저 생성해 num_predict를
+            # 소진하고 빈 응답을 반환함 → 사고 모드 비활성화 (등급 판정에는 불필요)
+            **({"think": False} if model_name.startswith("qwen3") else {}),
             "options": {
                 # temperature 0.7 유지: 실행 간 등급 변동은 버그가 아니라
                 # 등급 분포(불확실성 신호)를 만드는 원료로 사용함
