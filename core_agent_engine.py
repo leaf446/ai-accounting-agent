@@ -20,10 +20,19 @@ import io
 class AdvancedAuditAgent:
     """완전 A2A 협업 고급 감사 에이전트 AI"""
     
-    def __init__(self, dart_api_key: str):
+    def __init__(self, dart_api_key: str, ecos_api_key: str = None):
         self.dart_api_key = dart_api_key
         self.dart_base_url = "https://opendart.fss.or.kr/api"
         self.ollama_url = "http://localhost:11434/api/generate"
+
+        # ECOS(한국은행) 업종 벤치마크 클라이언트 (키가 있을 때만 활성화)
+        self.ecos_client = None
+        if ecos_api_key:
+            try:
+                from ecos_client import ECOSClient
+                self.ecos_client = ECOSClient(ecos_api_key)
+            except Exception as e:
+                print(f"⚠️ ECOS 클라이언트 초기화 실패 (업종 비교 비활성화): {e}")
         
         # A2A 전문 에이전트 정의 (항상 활성화)
         self.agents = {
@@ -197,6 +206,28 @@ class AdvancedAuditAgent:
         
         candidates = [value for key, value in major_companies.items() if company_name in key or key in company_name]
         return {"candidates": candidates, "exact_match": False} if candidates else None
+
+    def get_company_industry_code(self, corp_code: str) -> Optional[str]:
+        """DART 기업개황 API에서 표준산업분류코드(induty_code) 조회"""
+        try:
+            url = f"{self.dart_base_url}/company.json"
+            params = {'crtfc_key': self.dart_api_key, 'corp_code': corp_code}
+            data = requests.get(url, params=params, timeout=10).json()
+            if data.get('status') == '000':
+                return data.get('induty_code')
+        except (requests.RequestException, ValueError) as e:
+            print(f"⚠️ 업종코드 조회 실패: {e}")
+        return None
+
+    def get_industry_comparison(self, corp_code: str, ratios: Dict) -> Optional[Dict]:
+        """회사 재무비율을 동종업계 벤치마크(한국은행 기업경영분석)와 비교
+
+        ECOS 키가 없으면 None. 업종 매핑 불가 시 available=False 딕셔너리 반환.
+        """
+        if not self.ecos_client:
+            return None
+        induty_code = self.get_company_industry_code(corp_code)
+        return self.ecos_client.compare(ratios, induty_code)
 
     @staticmethod
     def _report_year_candidates() -> List[str]:
@@ -549,7 +580,10 @@ class AdvancedAuditAgent:
             # 5단계: 최종 A2A 투자 의견 합의 (항상 실행)
             print("🏆 A2A 최종 투자 의견 합의...")
             final_opinion = self._conduct_final_investment_discussion(ratios, fraud_ratios, company_name)
-            
+
+            # 5.5단계: 동종업계 벤치마크 비교 (ECOS 키가 있을 때)
+            industry_comparison = self.get_industry_comparison(corp_code, ratios)
+
             # 6단계: 결과 통합
             analysis_data = {
                 "company": company_name,
@@ -560,6 +594,7 @@ class AdvancedAuditAgent:
                 "ratios": ratios,
                 "fraud_ratios": fraud_ratios,
                 "final_a2a_opinion": final_opinion,
+                "industry_comparison": industry_comparison,
                 "timestamp": datetime.now()
             }
             

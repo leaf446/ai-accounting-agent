@@ -390,8 +390,10 @@ class ProfessionalReportGenerator:
         revenue = financial_data.get('revenue', 0)
         net_income = financial_data.get('net_income', 0)
         
+        multi_year = analysis_data.get('multi_year_data', {}) or {}
+        basis_year = max(multi_year.keys()) if multi_year else str(datetime.now().year - 1)
         performance_text = f"""
-{company_name}의 2024년 재무성과는 다음과 같습니다:
+{company_name}의 {basis_year} 회계연도 재무성과는 다음과 같습니다:
 
 • 매출액: {self._format_currency(revenue)}
 • 순이익: {self._format_currency(net_income)}
@@ -452,6 +454,61 @@ class ProfessionalReportGenerator:
             chart_path = self.viz_engine.create_trend_analysis_chart(multi_year_data, company_name)
             if chart_path:
                 self._add_image_to_document(doc, chart_path, "매출 및 순이익 추세 차트")
+
+        # 2.6 동종업계 비교 (ECOS 벤치마크가 있을 때)
+        self._add_industry_comparison(doc, analysis_data.get('industry_comparison'))
+
+    def _add_industry_comparison(self, doc: Document, comparison):
+        """동종업계 비교표 (한국은행 기업경영분석 벤치마크)"""
+        self._add_subsection_heading(doc, "2.6 동종업계 비교")
+
+        if not comparison:
+            note = doc.add_paragraph()
+            note.add_run("업종 벤치마크 데이터를 사용할 수 없습니다 (ECOS 미설정).").font.name = 'Malgun Gothic'
+            return
+
+        if not comparison.get("available"):
+            note = doc.add_paragraph()
+            run = note.add_run(f"동종업계 비교 불가: {comparison.get('reason', '해당 업종 통계 없음')}")
+            run.font.name = 'Malgun Gothic'
+            return
+
+        intro = doc.add_paragraph()
+        intro_run = intro.add_run(
+            f"{comparison['industry']} 업종 평균({comparison['period']} 기준)과 비교한 결과입니다."
+        )
+        intro_run.font.name = 'Malgun Gothic'
+
+        items = comparison["items"]
+        table = doc.add_table(rows=len(items) + 1, cols=4)
+        table.style = 'Light Grid Accent 1'
+        for j, header in enumerate(["지표", "당사", "업종 평균", "평가"]):
+            cell = table.rows[0].cells[j]
+            cell.paragraphs[0].clear()
+            run = cell.paragraphs[0].add_run(header)
+            run.font.bold = True
+            run.font.name = 'Malgun Gothic'
+            cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        for i, it in enumerate(items, 1):
+            row = table.rows[i]
+            cells_text = [it["metric"], f"{it['company']}%", f"{it['industry']}%", it["verdict"]]
+            for j, text in enumerate(cells_text):
+                cell = row.cells[j]
+                cell.paragraphs[0].clear()
+                run = cell.paragraphs[0].add_run(text)
+                run.font.name = 'Malgun Gothic'
+                run.font.size = Pt(11)
+                if j == 3:
+                    run.font.bold = True
+                    run.font.color.rgb = (self.color_scheme["success"] if text == "우량"
+                                          else self.color_scheme["danger"])
+
+        source_para = doc.add_paragraph()
+        source_run = source_para.add_run(f"※ 출처: {comparison['source']}")
+        source_run.font.name = 'Malgun Gothic'
+        source_run.font.size = Pt(8)
+        source_run.font.color.rgb = self.color_scheme["text_secondary"]
 
     def _create_risk_analysis_section(self, doc: Document, analysis_data: Dict, company_name: str):
         """위험분석 섹션"""

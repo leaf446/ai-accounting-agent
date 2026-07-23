@@ -84,14 +84,14 @@ class ModernAccountingGUI:
             self.root.after(300, self.connect_to_dart)
 
     @staticmethod
-    def _load_key_from_env_file() -> str:
-        """프로젝트 폴더의 .env 파일에서 DART_API_KEY를 읽어온다 (없으면 빈 문자열)"""
+    def _load_key_from_env_file(name: str = "DART_API_KEY") -> str:
+        """프로젝트 폴더의 .env 파일에서 지정한 키를 읽어온다 (없으면 빈 문자열)"""
         env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
         try:
             with open(env_path, encoding="utf-8-sig") as f:
                 for line in f:
                     line = line.strip()
-                    if line.startswith("DART_API_KEY="):
+                    if line.startswith(f"{name}="):
                         return line.split("=", 1)[1].strip()
         except OSError:
             pass
@@ -551,8 +551,9 @@ class ModernAccountingGUI:
         
         def connect_thread():
             try:
-                # 백엔드 시스템 초기화
-                self.agent = AdvancedAuditAgent(api_key)
+                # 백엔드 시스템 초기화 (ECOS 키가 있으면 업종 비교 활성화)
+                ecos_key = self._load_key_from_env_file("ECOS_API_KEY")
+                self.agent = AdvancedAuditAgent(api_key, ecos_api_key=ecos_key or None)
                 self.conversation_handler = SmartConversationHandler(self.agent)
                 
                 # 보고서 생성기 초기화
@@ -721,10 +722,14 @@ class ModernAccountingGUI:
                 fraud_ratios = self.agent.calculate_fraud_detection_ratios(financial_data, cash_flow_data)
 
                 self.agent.progress_callback = None
-                
+
+                # 동종업계 벤치마크 비교 (ECOS 키가 있을 때)
+                self.root.after(0, lambda: self.update_progress(97, "동종업계 비교 중..."))
+                industry_comparison = self.agent.get_industry_comparison(corp_code, ratios)
+
                 # 결과 정리
                 self.root.after(0, lambda: self.update_progress(100, "분석 완료!"))
-                
+
                 analysis_data = {
                     "company": self.current_company,
                     "company_info": self.current_company_info,
@@ -733,9 +738,10 @@ class ModernAccountingGUI:
                     "multi_year_data": multi_year_data,
                     "ratios": ratios,
                     "fraud_ratios": fraud_ratios,
+                    "industry_comparison": industry_comparison,
                     "timestamp": datetime.now()
                 }
-                
+
                 # 컨텍스트 저장
                 self.agent.save_analysis_context(self.current_company, analysis_data)
                 
@@ -800,6 +806,16 @@ class ModernAccountingGUI:
             else:
                 return "데이터 없음"
         
+        # 동종업계 비교 요약 (ECOS 벤치마크)
+        comparison = data.get('industry_comparison')
+        comparison_text = ""
+        if comparison and comparison.get("available"):
+            lines = [f"• {it['metric']}: 당사 {it['company']}% vs {comparison['industry']} 평균 {it['industry']}% → {it['verdict']}"
+                     for it in comparison["items"]]
+            comparison_text = f"\n🏭 동종업계 비교 ({comparison['industry']}, {comparison['period']}):\n" + "\n".join(lines) + "\n"
+        elif comparison and not comparison.get("available"):
+            comparison_text = f"\n🏭 동종업계 비교: {comparison.get('reason', '해당 없음')}\n"
+
         # 요약 텍스트 생성
         summary_text = f"""🏢 {self.current_company} 실제 DART 분석 완료
 
@@ -808,7 +824,7 @@ class ModernAccountingGUI:
 • 순이익: {format_currency(net_income)}
 • ROE: {roe:.2f}%
 • 부채비율: {debt_ratio:.2f}%
-
+{comparison_text}
 ⚠️ 부정위험 분석:
 • 위험점수: {fraud_score:.1f}점
 
