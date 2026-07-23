@@ -63,6 +63,9 @@ class ModernAccountingGUI:
         
         # GUI 상태 관리
         self.current_company = None
+        self.current_company_info = None
+        self.current_corp_code = None
+        self.prefetched_financial = None  # 검색 시 미리 가져온 재무 데이터 (분석에서 재사용)
         self.analysis_results = {}
         self.is_analyzing = False
         self.is_connected = False
@@ -74,7 +77,11 @@ class ModernAccountingGUI:
         
         # 시작 메시지
         self.add_chat_message("system", "🤖 AI 회계 분석 시스템이 준비되었습니다.")
-        self.add_chat_message("system", "💡 사용법:\n1. DART API 키 입력 후 연결\n2. 회사명 검색\n3. AI 분석 시작\n4. 보고서 생성 및 질문하기")
+        self.add_chat_message("system", "💡 사용법:\n1. 회사명 검색\n2. AI 분석 시작\n3. 보고서 생성 및 질문하기")
+
+        # .env에 API 키가 있으면 시작 시 자동 연결 (수동 연결 버튼은 폴백용으로 유지)
+        if self.api_entry.get().strip():
+            self.root.after(300, self.connect_to_dart)
 
     @staticmethod
     def _load_key_from_env_file() -> str:
@@ -602,23 +609,35 @@ class ModernAccountingGUI:
         def search_thread():
             try:
                 company_info = self.agent.search_company_dart(company_name)
-                
-                if company_info:
-                    if "candidates" in company_info:
-                        candidates = company_info["candidates"]
-                        choice = candidates[0]
-                        self.current_company = choice["corp_name"]
-                    else:
-                        self.current_company = company_info["corp_name"]
-                    
-                    self.root.after(0, self.search_success)
-                else:
+
+                if not company_info:
                     self.root.after(0, lambda: self.search_failed(company_name))
-                    
+                    return
+
+                if "candidates" in company_info:
+                    company_info = company_info["candidates"][0]
+
+                corp_code = company_info.get("corp_code")
+
+                # 검색 시점에 재무 데이터 존재 여부를 미리 확인
+                # (분석을 5~7분 돌린 뒤 데이터 없음을 발견하지 않도록)
+                financial_data = self.agent.get_financial_statements(corp_code) if corp_code else {}
+
+                if not financial_data:
+                    self.root.after(0, lambda: self.search_data_unavailable(company_info["corp_name"]))
+                    return
+
+                # 데이터 확인 성공 — 분석 단계에서 재사용하도록 저장 (재조회 방지)
+                self.current_company = company_info["corp_name"]
+                self.current_company_info = company_info
+                self.current_corp_code = corp_code
+                self.prefetched_financial = financial_data
+                self.root.after(0, self.search_success)
+
             except Exception as e:
                 error_message = str(e)
                 self.root.after(0, lambda: self.search_error(error_message))
-        
+
         threading.Thread(target=search_thread, daemon=True).start()
 
     def search_success(self):
@@ -631,6 +650,17 @@ class ModernAccountingGUI:
         """검색 실패 처리"""
         self.add_chat_message("error", f"❌ '{company_name}' 검색 결과 없음")
         messagebox.showinfo("검색 결과", f"'{company_name}' 검색 결과가 없습니다.\n\n추천 기업: 삼성전자, LG전자, 현대자동차, SK하이닉스")
+
+    def search_data_unavailable(self, company_name):
+        """회사는 찾았으나 재무 데이터를 조회할 수 없는 경우"""
+        self.analyze_button.configure(state="disabled")
+        self.add_chat_message("error", f"⚠️ '{company_name}'의 재무제표를 조회할 수 없습니다.")
+        messagebox.showinfo(
+            "재무 데이터 없음",
+            f"'{company_name}'은(는) DART에서 재무제표를 조회할 수 없습니다.\n"
+            f"비상장사이거나 사업보고서 공시 대상이 아닐 수 있습니다.\n\n"
+            f"상장사(예: 삼성전자, LG전자, SK하이닉스)로 시도해주세요."
+        )
 
     def search_error(self, error_message):
         """검색 오류 처리"""
@@ -659,31 +689,12 @@ class ModernAccountingGUI:
             try:
                 print(f"🔥🔥🔥 직접 백엔드 엔진 호출: {self.current_company}")
                 
-                # 실제 분석 실행
-                self.root.after(0, lambda: self.update_progress(10, "DART에서 회사 정보 검색 중..."))
-                company_info = self.agent.search_company_dart(self.current_company)
-                
-                if not company_info:
-                    raise Exception(f"{self.current_company} 검색 결과가 없습니다.")
-                
-                # 후보가 여러 개인 경우 첫 번째 선택
-                if "candidates" in company_info:
-                    company_info = company_info["candidates"][0]
-                
-                corp_code = company_info.get('corp_code')
-                if not corp_code:
-                    raise Exception(f"{self.current_company}의 기업코드를 찾을 수 없습니다.")
-                
-                # 재무제표 수집
-                self.root.after(0, lambda: self.update_progress(8, "DART에서 재무제표 수집 중..."))
-                financial_data = self.agent.get_financial_statements(corp_code)
+                # 회사코드와 재무 데이터는 검색 단계에서 이미 확보됨 (재조회 방지)
+                corp_code = self.current_corp_code
+                financial_data = self.prefetched_financial
 
-                # 재무 데이터가 없으면 0으로 분석하지 않고 즉시 중단
-                if not financial_data:
-                    raise Exception(
-                        f"{self.current_company}의 재무제표를 DART에서 조회할 수 없습니다.\n"
-                        f"비상장사이거나 사업보고서 공시 대상이 아닐 수 있습니다."
-                    )
+                if not corp_code or not financial_data:
+                    raise Exception(f"{self.current_company}의 재무 데이터가 준비되지 않았습니다. 다시 검색해주세요.")
 
                 # 현금흐름표 수집
                 self.root.after(0, lambda: self.update_progress(14, "DART에서 현금흐름표 수집 중..."))
@@ -716,7 +727,7 @@ class ModernAccountingGUI:
                 
                 analysis_data = {
                     "company": self.current_company,
-                    "company_info": company_info,
+                    "company_info": self.current_company_info,
                     "financial_data": financial_data,
                     "cash_flow_data": cash_flow_data,
                     "multi_year_data": multi_year_data,
