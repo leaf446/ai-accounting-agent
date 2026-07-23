@@ -102,101 +102,80 @@ class FinancialVisualizationEngine:
         }
 
     def _initialize_chart_templates(self) -> Dict[str, Dict]:
-        """차트 템플릿 초기화"""
+        """차트 템플릿 초기화
+
+        차트는 크게 그린 뒤 문서/GUI에서 축소 표시되므로, 축소 후에도 읽히도록
+        글씨 크기를 크게(제목 22~26, 라벨 16~18) 설정한다. figsize도 과도하게 크지
+        않게 잡아 축소 비율을 줄인다.
+        """
         return {
             "bar_chart": {
-                "figsize": (12, 8),
-                "title_size": 16,
-                "label_size": 12,
-                "tick_size": 10
+                "figsize": (11, 7),
+                "title_size": 24,
+                "label_size": 18,
+                "tick_size": 16
             },
             "line_chart": {
-                "figsize": (14, 8),
-                "title_size": 16,
-                "label_size": 12,
-                "tick_size": 10
+                "figsize": (11, 7),
+                "title_size": 24,
+                "label_size": 18,
+                "tick_size": 16
             },
             "pie_chart": {
-                "figsize": (10, 10),
-                "title_size": 16,
-                "label_size": 11
+                "figsize": (9, 9),
+                "title_size": 24,
+                "label_size": 17
             },
             "radar_chart": {
-                "figsize": (10, 10),
-                "title_size": 16,
-                "label_size": 12
+                "figsize": (9, 9),
+                "title_size": 22,
+                "label_size": 17
             },
             "dashboard": {
-                "figsize": (20, 12),
-                "title_size": 18,
-                "subtitle_size": 14,
-                "label_size": 12
+                "figsize": (18, 11),
+                "title_size": 26,
+                "subtitle_size": 18,
+                "label_size": 15
             }
         }
 
-    def create_ratio_comparison_chart(self, ratios: Dict, company_name: str, 
+    def create_ratio_comparison_chart(self, ratios: Dict, company_name: str,
                                     industry_averages: Dict = None) -> str:
-        """재무비율 비교 막대차트"""
-        
-        # 데이터 준비
-        ratio_names = []
-        company_values = []
-        industry_values = []
-        
-        # 기본 업계 평균값 (실제로는 DB나 API에서)
-        default_industry = {
-            "ROE": 12.5, "ROA": 8.3, "영업이익률": 8.7, "순이익률": 6.4,
-            "부채비율": 85.2, "유동비율": 150.0, "자기자본비율": 45.8
-        }
-        
-        if industry_averages is None:
-            industry_averages = default_industry
-        
-        for ratio_name, company_value in ratios.items():
-            if isinstance(company_value, (int, float)) and ratio_name in industry_averages:
-                ratio_names.append(ratio_name)
-                company_values.append(company_value)
-                industry_values.append(industry_averages[ratio_name])
-        
+        """주요 재무비율 막대차트 (회사 지표)
+
+        과거에는 하드코딩된 가짜 '업계 평균'과 비교했으나, 실제 동종업계 비교는
+        한국은행 ECOS 통계 기반 별도 표로 제공하므로 여기서는 회사 지표만 표시한다.
+        """
+        display_order = ["ROE", "ROA", "영업이익률", "순이익률", "부채비율", "자기자본비율"]
+        ratio_names, company_values = [], []
+        for name in display_order:
+            v = ratios.get(name)
+            if isinstance(v, (int, float)):
+                ratio_names.append(name)
+                company_values.append(v)
+
         if not ratio_names:
-            return self._create_no_data_chart("비교할 재무비율 데이터가 없습니다.")
-        
-        # 차트 생성
+            return self._create_no_data_chart("표시할 재무비율 데이터가 없습니다.")
+
         fig, ax = plt.subplots(figsize=self.chart_templates["bar_chart"]["figsize"])
-        
         x = np.arange(len(ratio_names))
-        width = 0.35
-        
-        bars1 = ax.bar(x - width/2, company_values, width, 
-                      label=company_name, color=self.colors["professional"][0], alpha=0.8)
-        bars2 = ax.bar(x + width/2, industry_values, width,
-                      label='업계 평균', color=self.colors["professional"][1], alpha=0.8)
-        
-        # 차트 스타일링
-        ax.set_xlabel('재무비율', fontsize=self.chart_templates["bar_chart"]["label_size"])
+        bars = ax.bar(x, company_values, 0.55,
+                      color=self.colors["professional"][0], alpha=0.85)
+
         ax.set_ylabel('비율 (%)', fontsize=self.chart_templates["bar_chart"]["label_size"])
-        ax.set_title(f'{company_name} 재무비율 vs 업계 평균 비교', 
+        ax.set_title(f'{company_name} 주요 재무비율',
                     fontsize=self.chart_templates["bar_chart"]["title_size"], fontweight='bold')
         ax.set_xticks(x)
-        ax.set_xticklabels(ratio_names, rotation=45, ha='right')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        
-        # 값 표시
-        for bar in bars1:
+        ax.set_xticklabels(ratio_names, rotation=30, ha='right', fontsize=16)
+        ax.grid(True, alpha=0.3, axis='y')
+
+        for bar in bars:
             height = bar.get_height()
             ax.annotate(f'{height:.1f}%',
                        xy=(bar.get_x() + bar.get_width() / 2, height),
                        xytext=(0, 3), textcoords="offset points",
-                       ha='center', va='bottom', fontsize=9)
-        
-        for bar in bars2:
-            height = bar.get_height()
-            ax.annotate(f'{height:.1f}%',
-                       xy=(bar.get_x() + bar.get_width() / 2, height),
-                       xytext=(0, 3), textcoords="offset points",
-                       ha='center', va='bottom', fontsize=9)
-        
+                       ha='center', va='bottom', fontsize=15, fontweight='bold')
+
         plt.tight_layout()
         
         # 파일 저장
@@ -313,7 +292,7 @@ class FinancialVisualizationEngine:
         # y축 설정
         ax.set_ylim(0, 100)
         ax.set_yticks([20, 40, 60, 80, 100])
-        ax.set_yticklabels(['20', '40', '60', '80', '100'], fontsize=10)
+        ax.set_yticklabels(['20', '40', '60', '80', '100'], fontsize=14)
         ax.grid(True)
         
         # 제목
@@ -362,7 +341,7 @@ class FinancialVisualizationEngine:
         fig, ax = plt.subplots(figsize=self.chart_templates["pie_chart"]["figsize"])
         
         wedges, texts, autotexts = ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%',
-                                         startangle=90, textprops={'fontsize': 11})
+                                         startangle=90, textprops={'fontsize': 16})
         
         # 스타일 개선
         for autotext in autotexts:
@@ -448,7 +427,7 @@ class FinancialVisualizationEngine:
         for bar, value in zip(bars, values):
             if value != 0:
                 ax.annotate(f'{value:.1f}%', (bar.get_x() + bar.get_width()/2, bar.get_height()),
-                           ha='center', va='bottom', fontsize=10)
+                           ha='center', va='bottom', fontsize=14, fontweight='bold')
 
     def _create_dashboard_trend_chart(self, ax, multi_year_data: Dict, company_name: str):
         """대시보드용 추세 차트"""
@@ -479,7 +458,7 @@ class FinancialVisualizationEngine:
         
         im = ax.imshow(risk_scores, cmap='RdYlGn_r', aspect='auto', vmin=0, vmax=100)
         ax.set_xticks(range(len(risk_categories)))
-        ax.set_xticklabels(risk_categories, rotation=45)
+        ax.set_xticklabels(risk_categories, rotation=45, fontsize=13)
         ax.set_yticks([])
         ax.set_title('부정 위험 히트맵', fontweight='bold')
         
