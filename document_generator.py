@@ -99,14 +99,11 @@ class ProfessionalReportGenerator:
         
         # 본문 섹션들은 페이지를 나누지 않고 자연스럽게 이어지도록 배치
         # (섹션마다 페이지를 강제로 넘겨 짧은 섹션 아래에 빈 공간이 크게 남던 문제 해소)
+        # 상세 재무비율은 부록이 아닌 재무현황(2.3)에 배치해 핵심 데이터를 앞에 둠
         self._create_executive_summary_section(doc, analysis_data, company_name)
         self._create_financial_status_section(doc, analysis_data, company_name)
         self._create_risk_analysis_section(doc, analysis_data, company_name)
         self._create_recommendations_section(doc, analysis_data, company_name)
-
-        # 부록은 성격이 달라 페이지 분리
-        doc.add_page_break()
-        self._create_appendix_section(doc, analysis_data)
         
         # 파일 저장
         filename = f"{company_name}_종합분석보고서_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
@@ -241,10 +238,9 @@ class ProfessionalReportGenerator:
 
         toc_entries = [
             ("1. 요약", "Executive Summary"),
-            ("2. 재무현황 분석", "Financial Status Analysis"),
+            ("2. 재무현황 분석 (상세 재무비율·동종업계 비교)", "Financial Status Analysis"),
             ("3. 위험 분석", "Risk Analysis"),
             ("4. 권고사항", "Recommendations"),
-            ("5. 부록", "Appendix"),
         ]
 
         for korean, english in toc_entries:
@@ -439,15 +435,17 @@ class ProfessionalReportGenerator:
         position_para = doc.add_paragraph()
         position_para.add_run(position_text).font.name = 'Malgun Gothic'
 
-        # 재무비율 비교 차트 추가
-        doc.add_paragraph()
+        # 2.3 상세 재무비율 (핵심 데이터를 부록이 아닌 본문 앞쪽에 배치)
+        self._add_subsection_heading(doc, "2.3 상세 재무비율")
+        self._add_ratio_detail_table(doc, ratios)
+
+        # 2.4 주요 재무비율 시각화
         self._add_subsection_heading(doc, "2.4 주요 재무비율 시각화")
         chart_path = self.viz_engine.create_ratio_comparison_chart(ratios, company_name)
         if chart_path:
             self._add_image_to_document(doc, chart_path, "주요 재무비율 비교 차트")
 
-        # 다년도 추세 분석 차트 추가
-        doc.add_paragraph()
+        # 2.5 다년도 재무 추세
         self._add_subsection_heading(doc, "2.5 다년도 재무 추세")
         multi_year_data = analysis_data.get('multi_year_data', {})
         if multi_year_data:
@@ -570,11 +568,26 @@ class ProfessionalReportGenerator:
             warning_run.font.bold = True
 
         # 부정 위험 레이더 차트 추가
-        doc.add_paragraph()
         self._add_subsection_heading(doc, "3.2 부정 위험 시각화")
+
+        # 차트 해석 안내 (5개 축의 의미와 읽는 법을 명시)
+        guide = doc.add_paragraph()
+        guide_run = guide.add_run(
+            "아래 레이더 차트의 5개 축은 각각 부정위험 신호를 0~100점으로 나타냅니다"
+            "(점수가 높을수록 위험). 도형이 중심에 가까울수록(면적이 작을수록) 안전합니다.\n"
+            "· 현금흐름 비율: 순이익 대비 영업현금흐름이 부족한 정도\n"
+            "· 매출채권 비율: 매출 대비 매출채권이 과다한 정도 (매출 부풀리기 신호)\n"
+            "· 재고 비율: 매출 대비 재고가 과다한 정도\n"
+            "· 이익 품질: 순이익은 흑자이나 현금흐름이 적자인지 여부\n"
+            "· 전반적 위험: 위 지표를 종합한 부정위험 점수"
+        )
+        guide_run.font.name = 'Malgun Gothic'
+        guide_run.font.size = Pt(9)
+        guide_run.font.color.rgb = self.color_scheme["text_secondary"]
+
         chart_path = self.viz_engine.create_fraud_risk_radar_chart(fraud_ratios, company_name)
         if chart_path:
-            self._add_image_to_document(doc, chart_path, "부정 위험 레이더 차트")
+            self._add_image_to_document(doc, chart_path, "부정 위험 레이더 차트 (중심에 가까울수록 안전)")
 
     def _create_recommendations_section(self, doc: Document, analysis_data: Dict, company_name: str):
         """권고사항 섹션"""
@@ -626,56 +639,6 @@ class ProfessionalReportGenerator:
             action_para = doc.add_paragraph()
             action_para.add_run(f"{i}. {action}").font.name = 'Malgun Gothic'
 
-    def _create_appendix_section(self, doc: Document, analysis_data: Dict):
-        """부록 섹션"""
-        
-        self._add_section_heading(doc, "부록 A. 상세 재무비율", "Appendix A. Detailed Financial Ratios")
-        
-        ratios = analysis_data.get('ratios', {})
-        
-        if ratios:
-            # 상세 재무비율 테이블
-            ratio_table = doc.add_table(rows=len(ratios) + 1, cols=3)
-            ratio_table.style = 'Table Grid'
-            
-            # 헤더
-            header_cells = ratio_table.rows[0].cells
-            headers = ["재무비율", "수치", "설명"]
-            for i, header in enumerate(headers):
-                para = header_cells[i].paragraphs[0]
-                para.clear()
-                run = para.add_run(header)
-                run.font.bold = True
-                run.font.name = 'Malgun Gothic'
-                para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            
-            # 데이터
-            for i, (ratio_name, ratio_value) in enumerate(ratios.items(), 1):
-                row = ratio_table.rows[i]
-                
-                # 비율명
-                name_para = row.cells[0].paragraphs[0]
-                name_para.clear()
-                name_para.add_run(ratio_name).font.name = 'Malgun Gothic'
-                
-                # 수치
-                value_para = row.cells[1].paragraphs[0]
-                value_para.clear()
-                if isinstance(ratio_value, (int, float)):
-                    if ratio_name in ['ROE', 'ROA', '영업이익률', '순이익률', '부채비율']:
-                        formatted_value = f"{ratio_value:.2f}%"
-                    else:
-                        formatted_value = f"{ratio_value:.2f}"
-                else:
-                    formatted_value = str(ratio_value)
-                value_para.add_run(formatted_value).font.name = 'Malgun Gothic'
-                
-                # 설명
-                desc_para = row.cells[2].paragraphs[0]
-                desc_para.clear()
-                description = self._get_ratio_description(ratio_name, ratio_value)
-                desc_para.add_run(description).font.name = 'Malgun Gothic'
-
     def _add_section_heading(self, doc: Document, korean_title: str, english_title: str = ""):
         """섹션 제목 추가 (빈 문단 대신 문단 간격으로 여백 조절)"""
         heading_para = doc.add_paragraph()
@@ -698,14 +661,62 @@ class ProfessionalReportGenerator:
         heading_para.paragraph_format.space_after = Pt(8)
 
     def _add_subsection_heading(self, doc: Document, title: str):
-        """하위 섹션 제목 추가"""
+        """하위 섹션 제목 추가 (빈 문단 대신 문단 간격으로 여백 조절)"""
         heading_para = doc.add_paragraph()
+        heading_para.paragraph_format.space_before = Pt(10)
+        heading_para.paragraph_format.space_after = Pt(4)
         heading_run = heading_para.add_run(title)
         heading_run.font.name = 'Malgun Gothic'
         heading_run.font.size = Pt(14)
         heading_run.font.bold = True
         heading_run.font.color.rgb = self.color_scheme["secondary"]
-        doc.add_paragraph()
+
+    # 표에 표시할 실제 재무비율 (A2A 메타데이터·비수치 값은 제외)
+    _RATIO_DISPLAY_ORDER = [
+        "ROE", "ROA", "영업이익률", "순이익률", "부채비율",
+        "자기자본비율", "총자산회전율", "매출성장률", "순이익성장률",
+    ]
+
+    def _add_ratio_detail_table(self, doc: Document, ratios: Dict):
+        """상세 재무비율 표 (지표/수치/설명)
+
+        ratios에는 A2A_토론결과 같은 메타데이터가 섞여 있으므로, 실제 수치형
+        비율만 정해진 순서로 표시한다. (과거에는 메타데이터가 '수치' 칸에 들어가
+        표가 세로로 길어지는 문제가 있었음)
+        """
+        items = [(name, ratios[name]) for name in self._RATIO_DISPLAY_ORDER
+                 if isinstance(ratios.get(name), (int, float))]
+        if not items:
+            return
+
+        table = doc.add_table(rows=len(items) + 1, cols=3)
+        table.style = 'Light Grid Accent 1'
+        # 열 너비: 지표(좁게)·수치(중간)·설명(넓게)
+        widths = [Inches(1.4), Inches(1.2), Inches(3.8)]
+        for row in table.rows:
+            for cell, w in zip(row.cells, widths):
+                cell.width = w
+
+        for j, header in enumerate(["재무비율", "수치", "설명"]):
+            cell = table.rows[0].cells[j]
+            cell.paragraphs[0].clear()
+            run = cell.paragraphs[0].add_run(header)
+            run.font.bold = True
+            run.font.name = 'Malgun Gothic'
+            cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        percent_ratios = {"ROE", "ROA", "영업이익률", "순이익률", "부채비율",
+                          "자기자본비율", "매출성장률", "순이익성장률"}
+        for i, (name, value) in enumerate(items, 1):
+            row = table.rows[i]
+            formatted = f"{value:.2f}%" if name in percent_ratios else f"{value:.2f}"
+            for j, text in enumerate([name, formatted, self._get_ratio_description(name, value)]):
+                cell = row.cells[j]
+                cell.width = widths[j]
+                cell.paragraphs[0].clear()
+                run = cell.paragraphs[0].add_run(text)
+                run.font.name = 'Malgun Gothic'
+                run.font.size = Pt(10)
 
     def _format_currency(self, amount: int) -> str:
         """통화 포맷팅"""
