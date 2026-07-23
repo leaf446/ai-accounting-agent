@@ -97,23 +97,15 @@ class ProfessionalReportGenerator:
         self._create_table_of_contents(doc)
         doc.add_page_break()
         
-        # 1. 요약 섹션
+        # 본문 섹션들은 페이지를 나누지 않고 자연스럽게 이어지도록 배치
+        # (섹션마다 페이지를 강제로 넘겨 짧은 섹션 아래에 빈 공간이 크게 남던 문제 해소)
         self._create_executive_summary_section(doc, analysis_data, company_name)
-        doc.add_page_break()
-        
-        # 2. 재무현황 섹션
         self._create_financial_status_section(doc, analysis_data, company_name)
-        doc.add_page_break()
-        
-        # 3. 위험분석 섹션  
         self._create_risk_analysis_section(doc, analysis_data, company_name)
-        doc.add_page_break()
-        
-        # 4. 권고사항 섹션
         self._create_recommendations_section(doc, analysis_data, company_name)
+
+        # 부록은 성격이 달라 페이지 분리
         doc.add_page_break()
-        
-        # 5. 부록
         self._create_appendix_section(doc, analysis_data)
         
         # 파일 저장
@@ -342,12 +334,15 @@ class ProfessionalReportGenerator:
             run.font.name = 'Malgun Gothic'
             para.alignment = WD_ALIGN_PARAGRAPH.CENTER
         
-        # 테이블 데이터
+        op_margin = ratios.get('영업이익률', 0)
+        net_margin = ratios.get('순이익률', 0)
+
+        # 테이블 데이터 (평가는 아래 '평가 기준' 표에 명시된 임계값 기반)
         table_data = [
             ("ROE", f"{roe:.1f}%", "우수" if roe > 15 else "보통" if roe > 8 else "개선필요"),
             ("부채비율", f"{debt_ratio:.1f}%", "양호" if debt_ratio < 100 else "보통" if debt_ratio < 200 else "위험"),
-            ("영업이익률", f"{ratios.get('영업이익률', 0):.1f}%", "분석결과"),
-            ("순이익률", f"{ratios.get('순이익률', 0):.1f}%", "분석결과"),
+            ("영업이익률", f"{op_margin:.1f}%", "우수" if op_margin > 12 else "보통" if op_margin > 5 else "개선필요"),
+            ("순이익률", f"{net_margin:.1f}%", "우수" if net_margin > 10 else "보통" if net_margin > 4 else "개선필요"),
             ("부정위험점수", f"{fraud_score:.0f}점", "낮음" if fraud_score < 30 else "보통" if fraud_score < 60 else "높음")
         ]
         
@@ -368,6 +363,18 @@ class ProfessionalReportGenerator:
                         run.font.color.rgb = self.color_scheme["success"]
                     elif "위험" in text or "높음" in text:
                         run.font.color.rgb = self.color_scheme["danger"]
+
+        # 평가 기준 명시 (지표별 임계값을 보고서에 투명하게 표시)
+        criteria_note = doc.add_paragraph()
+        criteria_note.paragraph_format.space_before = Pt(8)
+        note_run = criteria_note.add_run(
+            "※ 평가 기준  ·  ROE: 우수>15%, 보통>8%  ·  부채비율: 양호<100%, 보통<200%  ·  "
+            "영업이익률: 우수>12%, 보통>5%  ·  순이익률: 우수>10%, 보통>4%  ·  "
+            "부정위험점수: 낮음<30, 보통<60 (100점 만점, 높을수록 위험)"
+        )
+        note_run.font.name = 'Malgun Gothic'
+        note_run.font.size = Pt(8)
+        note_run.font.color.rgb = self.color_scheme["text_secondary"]
 
     def _create_financial_status_section(self, doc: Document, analysis_data: Dict, company_name: str):
         """재무현황 섹션"""
@@ -476,7 +483,27 @@ class ProfessionalReportGenerator:
         
         risk_para = doc.add_paragraph()
         risk_para.add_run(risk_text).font.name = 'Malgun Gothic'
-        
+
+        # 부정위험 등급 → 감사의견 스타일 참고 라벨
+        risk_grade = fraud_ratios.get('A2A_부정위험등급')
+        if risk_grade:
+            from core_agent_engine import AdvancedAuditAgent
+            opinion_hint = AdvancedAuditAgent.audit_opinion_hint(risk_grade)
+            audit_para = doc.add_paragraph()
+            audit_para.paragraph_format.space_before = Pt(6)
+            label_run = audit_para.add_run(f"재무제표 신뢰성 참고: {opinion_hint}")
+            label_run.font.name = 'Malgun Gothic'
+            label_run.font.bold = True
+            label_run.font.size = Pt(11)
+            note_run = audit_para.add_run(
+                "\n※ 실제 감사의견이 아니라 부정위험 지표에 기반한 참고 표현입니다. "
+                "감사의견은 회사의 재무 건전성이 아닌 재무제표의 신뢰성을 판단하는 것으로, "
+                "정식 감사 절차를 통해서만 표명될 수 있습니다."
+            )
+            note_run.font.name = 'Malgun Gothic'
+            note_run.font.size = Pt(8)
+            note_run.font.color.rgb = self.color_scheme["text_secondary"]
+
         # 위험 요소 상세 분석
         if fraud_ratios.get('순이익_양수_현금흐름_음수', False):
             warning_para = doc.add_paragraph()
@@ -593,24 +620,25 @@ class ProfessionalReportGenerator:
                 desc_para.add_run(description).font.name = 'Malgun Gothic'
 
     def _add_section_heading(self, doc: Document, korean_title: str, english_title: str = ""):
-        """섹션 제목 추가"""
+        """섹션 제목 추가 (빈 문단 대신 문단 간격으로 여백 조절)"""
         heading_para = doc.add_paragraph()
+        heading_para.paragraph_format.space_before = Pt(18)
+        heading_para.paragraph_format.space_after = Pt(4)
         heading_run = heading_para.add_run(korean_title)
         heading_run.font.name = 'Malgun Gothic'
         heading_run.font.size = Pt(16)
         heading_run.font.bold = True
         heading_run.font.color.rgb = self.color_scheme["primary"]
-        
+
         if english_title:
-            doc.add_paragraph()
-            eng_para = doc.add_paragraph()
-            eng_run = eng_para.add_run(english_title)
-            eng_run.font.name = 'Calibri'
-            eng_run.font.size = Pt(12)
-            eng_run.font.italic = True
-            eng_run.font.color.rgb = self.color_scheme["secondary"]
-        
-        doc.add_paragraph()
+            eng_run = heading_run
+            eng_para = heading_para
+            sub = eng_para.add_run(f"   {english_title}")
+            sub.font.name = 'Calibri'
+            sub.font.size = Pt(11)
+            sub.font.italic = True
+            sub.font.color.rgb = self.color_scheme["secondary"]
+        heading_para.paragraph_format.space_after = Pt(8)
 
     def _add_subsection_heading(self, doc: Document, title: str):
         """하위 섹션 제목 추가"""

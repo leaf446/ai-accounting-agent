@@ -858,6 +858,23 @@ class AdvancedAuditAgent:
         agreement_ratio = grades.count(most_common) / len(grades)
         return int(50 + 40 * agreement_ratio)
 
+    @staticmethod
+    def audit_opinion_hint(risk_grade: str) -> str:
+        """부정위험 등급을 감사의견 스타일 참고 표현으로 환산
+
+        주의: 실제 감사의견이 아니라, 부정위험 지표 기반의 '재무제표 신뢰성'
+        참고 라벨이다. 감사의견은 회사의 재무 건전성이 아니라 재무제표가
+        신뢰할 만하게 작성되었는지를 판단하는 것이므로, 재무비율 등급이 아닌
+        부정위험 쪽에만 연결한다.
+        """
+        mapping = {
+            "A": "적정의견 수준 (신뢰성 우려 낮음)",
+            "B": "적정의견 수준 (신뢰성 우려 낮음)",
+            "C": "한정의견 검토 수준 (일부 신뢰성 우려)",
+            "D": "부적정·의견거절 우려 수준 (중대한 신뢰성 우려)",
+        }
+        return mapping.get(risk_grade, "판단 보류")
+
     def _calculate_basic_ratios(self, financial_data: Dict, multi_year_data: Dict = None) -> Dict:
         """기본 재무비율 계산"""
         ratios = {}

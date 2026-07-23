@@ -105,6 +105,21 @@ class TestGradeExtraction:
         assert agent._extract_grade_from_consensus("판단 불가") == "B"
 
 
+class TestAuditOpinionHint:
+    """부정위험 등급 → 감사의견 스타일 참고 라벨 매핑"""
+
+    def test_low_risk_maps_to_unqualified(self, agent):
+        assert "적정" in agent.audit_opinion_hint("A")
+        assert "적정" in agent.audit_opinion_hint("B")
+
+    def test_high_risk_maps_to_adverse(self, agent):
+        assert "한정" in agent.audit_opinion_hint("C")
+        assert "부적정" in agent.audit_opinion_hint("D") or "의견거절" in agent.audit_opinion_hint("D")
+
+    def test_unknown_grade_is_safe(self, agent):
+        assert agent.audit_opinion_hint("Z") == "판단 보류"
+
+
 class TestGradeDistribution:
     """판정 분포와 확신도 — '확정이 아닌 판단 보조' 기능의 핵심 로직"""
 
